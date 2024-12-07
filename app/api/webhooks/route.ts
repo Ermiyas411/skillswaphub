@@ -1,9 +1,14 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import { Webhook } from "svix";
 import { headers } from "next/headers";
-import { WebhookEvent } from "@clerk/nextjs/server";
-import { createUser } from "@/database/actions/users.actions";
+import { clerkClient, WebhookEvent } from "@clerk/nextjs/server";
+import {
+  createUser,
+  deleteUser,
+  updateUser,
+} from "@/database/actions/users.actions";
 import { IUser } from "@/database/models/users.model";
+import { NextResponse } from "next/server";
 
 export async function POST(req: Request) {
   const SIGNING_SECRET = process.env.SIGNING_SECRET;
@@ -55,21 +60,66 @@ export async function POST(req: Request) {
   const { id } = evt.data;
   const eventType = evt.type;
 
-  if (evt.type === "user.created") {
-    const { id, email_addresses, first_name, last_name, username } = evt.data;
-    const user = await createUser({
+  if (eventType === "user.created") {
+    const { id, email_addresses, image_url, first_name, last_name, username } =
+      evt.data;
+
+    const user = {
       clerkId: id,
       email: email_addresses[0].email_address,
-      name: `${first_name} ${last_name}`,
-      username: username || "",
+      username: username!,
+      name: `${first_name || ""} ${last_name || ""}`.trim(),
+      firstName: first_name,
+      lastName: last_name,
+      photo: image_url,
       bio: "",
-      image: "",
-      location: "",
-      portfolio: "",
       reputation: 0,
-    });
+      portfolio: "",
+      location: "",
+    };
 
-    console.log("userId:", evt.data.id);
+    const newUser = await createUser(user);
+
+    // Set public metadata
+    if (newUser) {
+      await (
+        await clerkClient()
+      ).users.updateUserMetadata(id, {
+        publicMetadata: {
+          userId: newUser._id,
+        },
+      });
+    }
+
+    return NextResponse.json({ message: "OK", user: newUser });
+  }
+
+  // UPDATE
+  if (eventType === "user.updated") {
+    const { id, image_url, first_name, last_name, username } = evt.data;
+
+    const user = {
+      clerkId: id,
+      name: `${first_name || ""} ${last_name || ""}`.trim(),
+      email: evt.data.email_addresses[0].email_address,
+      firstName: first_name,
+      lastName: last_name,
+      username: username!,
+      photo: image_url,
+    };
+
+    const updatedUser = await updateUser(id, user as IUser);
+
+    return NextResponse.json({ message: "OK", user: updatedUser });
+  }
+
+  // DELETE
+  if (eventType === "user.deleted") {
+    const { id } = evt.data;
+
+    const deletedUser = await deleteUser(id!);
+
+    return NextResponse.json({ message: "OK", user: deletedUser });
   }
 
   return new Response("Webhook received", { status: 200 });
